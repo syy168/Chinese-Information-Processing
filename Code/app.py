@@ -30,7 +30,7 @@ with st.sidebar:
     )
     
     # API 配置
-    st.subheader("🔑 DeepSeek API 配置")
+    st.subheader(" DeepSeek API 配置")
     api_key = st.text_input(
         "API Key", 
         type="password", 
@@ -220,15 +220,20 @@ with tab2:
                         result = st.session_state.rag_system.query(question, query_type)
                         st.success("✅ 分析完成")
                         st.write("**回答:**")
-                        st.write(result['response'])
+                        st.markdown(result['response'])
                         
                         # 显示来源
                         with st.expander("📚 参考来源"):
+                            shown_titles=[]
                             for i, source in enumerate(result['sources']):
-                                st.write(f"**来源 {i+1}:**")
-                                st.write(source['text'])
-                                st.write(f"**元数据:** {source['metadata']}")
-                                st.write("---")
+                                title = source['metadata'].get('title', '无标题')
+                                if title not in shown_titles:
+                                    st.write(f"**来源 {i+1}:**")
+                                    # st.write(source['text'])
+                                    # st.write(f"**元数据:** {source['metadata']}")
+                                    st.write(title)
+                                    st.write("---")
+                                    shown_titles.add(title)
                     except Exception as e:
                         st.error(f"❌ 查询失败: {str(e)}")
         
@@ -248,11 +253,16 @@ with tab2:
                         
                         # 显示来源
                         with st.expander("📚 参考来源"):
+                            shown_titles = []
                             for i, source in enumerate(result['sources']):
-                                st.write(f"**来源 {i+1}:**")
-                                st.write(source['text'])
-                                st.write(f"**元数据:** {source['metadata']}")
-                                st.write("---")
+                                title = source['metadata'].get('title', '无标题')
+                                if title not in shown_titles:
+                                    st.write(f"**来源 {i+1}:**")
+                                    # st.write(source['text'])
+                                    # st.write(f"**元数据:** {source['metadata']}")
+                                    st.write(title)
+                                    st.write("---")
+                                    shown_titles.add(title)
                     except Exception as e:
                         st.error(f"❌ 查询失败: {str(e)}")
         
@@ -358,6 +368,10 @@ with tab3:
                                     transformations=[SentenceSplitter(chunk_size=1000, chunk_overlap=200)]
                                 )
                                 st.success("索引重建完成！")
+                                st.rerun()# 强制刷新session_state
+                                #st.session_state.rag_system = st.session_state.rag_system  # 强制刷新session_state
+                                # if not st.session_state.rag_system:
+                                #     print("none")
                             except Exception as e:
                                 st.error(f"索引重建失败: {str(e)}")
                     else:

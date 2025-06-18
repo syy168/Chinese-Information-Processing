@@ -62,17 +62,19 @@ class ArxivAPI():
 
     def search_papers(self, query: str, max_results: int = 10) -> List[PaperData]:
         """从ArXiv搜索论文"""
-        client = arxiv.Client()
+        max_results_limit = min(int(max_results), 50)
+        print('最终max_results:',max_results_limit)
+        #client = arxiv.Client()
         search = arxiv.Search(
             query=query,
-            max_results=max_results,
+            max_results=max_results_limit,
             # 按时间降序，最新论文优先
             sort_by=arxiv.SortCriterion.SubmittedDate,
             sort_order=arxiv.SortOrder.Descending
         )
         
         papers = []
-        for result in client.results(search):
+        for result in arxiv.Search.results(search):
             paper = PaperData(
                 title=result.title,
                 authors=[author.name for author in result.authors],
@@ -454,7 +456,7 @@ class RAGSystem:
         Settings.llm = deepseek_llm
         
         # Settings.embed_model = HuggingFaceEmbedding(model_name="/home/aistudio/BAAI-bge-small-en-v1.5")
-        Settings.embed_model = HuggingFaceEmbedding(model_name="C:\MyE\BAAI-bge-small-en-v1.5")
+        Settings.embed_model = HuggingFaceEmbedding(model_name="../BAAI-bge-small-en-v1.5")
         
         
         
@@ -475,6 +477,7 @@ class RAGSystem:
         print(f"使用 {self.data_source.value} 搜索论文...")
         
         # 搜索论文
+        print(query, max_results)
         papers = self.dataAPI.search_papers(query, max_results)
         print(f"找到 {len(papers)} 篇论文")
         
@@ -493,7 +496,7 @@ class RAGSystem:
             similarity_top_k=5,
             response_mode="tree_summarize"
         )
-        
+
         print("索引构建完成")
         return papers
     
@@ -502,10 +505,9 @@ class RAGSystem:
         if not self.index:
             raise ValueError("请先搜索论文并构建索引")
         
-        # 使用 LlamaIndex 检索相关文档
-        retriever = VectorIndexRetriever(index=self.index, similarity_top_k=5)
+        # 使用 LlamaIndex 检索相关文档,这里已经限制索引，因此similarity_top_k改设为none
+        retriever = VectorIndexRetriever(index=self.index, similarity_top_k=None)
         nodes = retriever.retrieve(question)
-        
         # 准备上下文
         context = "\n\n".join([node.text for node in nodes])
         
@@ -520,7 +522,13 @@ class RAGSystem:
                 result = chain.invoke({"context": context, "query": question, "history": history})
             else:
                 result = chain.invoke({"context": context, "query": question})
-            response = str(result)
+            #response = str(result)
+            if hasattr(result, 'text'):
+                response = result.text
+            elif isinstance(result, dict) and 'text' in result:
+                response = result['text']
+            else:
+                response = str(result)
         else:
             # 回退到 LlamaIndex
             response = str(self.query_engine.query(question))
@@ -532,7 +540,7 @@ class RAGSystem:
             "sources": [{
                 "text": node.text[:200] + "..." if len(node.text) > 200 else node.text,
                 "metadata": node.metadata
-            } for node in nodes[:3]],
+            } for node in nodes],
             "method": f"langchain_{query_type}" if query_type in self.chains else "llamaindex"
         }
     
