@@ -186,9 +186,9 @@ with tab1:
                             task = metric.get('task', {}).get('name', '未知任务')
                             dataset = metric.get('dataset', {}).get('name', '未知数据集')
                             st.write(f"- {task} on {dataset}")
-                            if metric.get('metrics'):
-                                for m in metric['metrics'][:2]:  # 显示前2个指标值
-                                    st.write(f"  - {m.get('name', '未知指标')}: {m.get('value', 'N/A')}")
+                            # if metric.get('metrics'):
+                            #     for m in metric['metrics'][:2]:  # 显示前2个指标值,有bug
+                            #         st.write(f"  - {m.get('name', '未知指标')}: {m.get('value', 'N/A')}")
 
 with tab2:
     st.header("🤖 智能问答")
@@ -224,7 +224,7 @@ with tab2:
                         
                         # 显示来源
                         with st.expander("📚 参考来源"):
-                            shown_titles=[]
+                            shown_titles=set()
                             for i, source in enumerate(result['sources']):
                                 title = source['metadata'].get('title', '无标题')
                                 if title not in shown_titles:
@@ -253,7 +253,7 @@ with tab2:
                         
                         # 显示来源
                         with st.expander("📚 参考来源"):
-                            shown_titles = []
+                            shown_titles = set()
                             for i, source in enumerate(result['sources']):
                                 title = source['metadata'].get('title', '无标题')
                                 if title not in shown_titles:
