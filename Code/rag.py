@@ -500,14 +500,41 @@ class RAGSystem:
         print("索引构建完成")
         return papers
     
-    def query(self, question: str, query_type: str = "comprehensive") -> Dict[str, Any]:
+    def query(self, question: str, query_type: str = "comprehensive", selected_papers=None, selected_codes=None) -> Dict[str, Any]:
         """智能查询"""
         if not self.index:
             raise ValueError("请先搜索论文并构建索引")
         
-        # 使用 LlamaIndex 检索相关文档,这里已经限制索引，因此similarity_top_k改设为none
-        retriever = VectorIndexRetriever(index=self.index, similarity_top_k=None)
-        nodes = retriever.retrieve(question)
+        # 使用 LlamaIndex 检索相关文档
+        if selected_papers or selected_codes:
+            # 如果用户选择了特定文章或代码，则只从这些内容中检索
+            nodes = []
+            
+            # 从索引中获取所有节点
+            all_nodes = self.index.docstore.docs.values()
+            
+            # 根据选择的文章筛选节点
+            if selected_papers:
+                for node in all_nodes:
+                    if 'title' in node.metadata and node.metadata['title'] in selected_papers:
+                        nodes.append(node)
+            
+            # 根据选择的代码筛选节点
+            if selected_codes and not nodes:  # 如果没有选择文章或没有找到匹配的文章节点
+                for node in all_nodes:
+                    if 'source' in node.metadata and node.metadata['source'] in ['github', 'PWC code info'] and \
+                       'paper_title' in node.metadata and node.metadata['paper_title'] in selected_codes:
+                        nodes.append(node)
+            
+            # 如果没有找到匹配的节点，则使用默认检索方法
+            if not nodes:
+                retriever = VectorIndexRetriever(index=self.index, similarity_top_k=5)
+                nodes = retriever.retrieve(question)
+        else:
+            # 默认检索方法
+            retriever = VectorIndexRetriever(index=self.index, similarity_top_k=5)
+            nodes = retriever.retrieve(question)
+        
         # 准备上下文
         context = "\n\n".join([node.text for node in nodes])
         
@@ -593,7 +620,108 @@ class RAGSystem:
             papers.append(paper)
         
         return papers
+# 在RAGSystem类中添加以下方法
 
+    def add_paper_from_arxiv_link(self, arxiv_link: str) -> Optional[PaperData]:
+        """从ArXiv链接添加单篇论文"""
+        try:
+            # 从链接中提取论文ID
+            import re
+            arxiv_id = re.search(r'arxiv\.org/(?:abs|pdf)/([\d\.]+)(?:v\d+)?', arxiv_link)
+            # print(arxiv_id)
+            if not arxiv_id:
+                return None
+            
+            arxiv_id = arxiv_id.group(1)
+            
+            # 使用arxiv API获取论文信息
+            client = arxiv.Client()
+            search = arxiv.Search(id_list=[arxiv_id])
+            
+            for result in client.results(search):
+                paper = PaperData(
+                    title=result.title,
+                    authors=[author.name for author in result.authors],
+                    summary=result.summary,
+                    pdf_url=result.pdf_url,
+                    published=result.published.isoformat() if result.published else None
+                )
+                
+                # 丰富论文数据
+                if self.data_source == DataSource.ARXIV:
+                    paper = self.dataAPI.enrich_paper_data(paper)
+                else:
+                    # 如果当前数据源是PWC，但我们添加的是ArXiv论文，仍然使用ArXiv API丰富数据
+                    arxiv_api = ArxivAPI()
+                    paper = arxiv_api.enrich_paper_data(paper)
+                
+                return paper
+            
+            return None
+        except Exception as e:
+            print(f"从ArXiv链接添加论文失败: {e}")
+            return None
+    
+    def optimize_query(self, query: str) -> str: 
+        """使用 DeepSeek 优化搜索关键词，并将其转换为 arXiv 支持的布尔查询语法"""
+        if not self.llm_adapter:
+            raise ValueError("请先配置LLM")
+        
+        # 构建提示模板
+        prompt_template = """
+        你是一个专业的对于arXiv论文搜索专家。请将以下搜索关键词优化为更专业、更精确的学术搜索词，以便在学术论文数据库中检索相关论文。
+
+        原始搜索关键词: {query}
+
+        请考虑以下几点：
+        1. 使用该领域的专业术语和标准表达方式
+        2. 使用恰当的布尔表达式EXP和字段type连接关键词，EXP可选AND OR,type可选为ti（tiltle）abs（abstract）all（所有），
+        3. 保持简洁，通常不超过3个关键词组合
+        4. 保持英文表达
+        5. 如果原始关键词已经是专业的学术搜索词，可以保持不变或做微小调整
+        6. 返回类似的字符串type1:keyword1 EXP type2:keyword3 EXP type3:keyword3
+
+        优化后的搜索字符串（不要包含任何解释）:
+        """
+
+        from langchain.prompts import PromptTemplate
+        from langchain.chains import LLMChain
+
+        optimize_prompt = PromptTemplate(
+            input_variables=["query"],
+            template=prompt_template
+        )
+
+        optimize_chain = LLMChain(
+            llm=self.llm_adapter,
+            prompt=optimize_prompt
+        )
+
+        # 调用 LLM 优化查询
+        result = optimize_chain.invoke({"query": query})
+
+        # 提取结果
+        if hasattr(result, 'text'):
+            optimized_query = result.text.strip()
+        elif isinstance(result, dict) and 'text' in result:
+            optimized_query = result['text'].strip()
+        else:
+            optimized_query = str(result).strip()
+
+        # 如果为空，直接返回原始
+        if not optimized_query:
+            return query
+        return optimized_query
+
+        #  将 "xxx", "yyy" 格式转换为 arXiv 支持的查询格式
+        # import re
+        # keywords = re.findall(r'"([^"]+)"', optimized_query)
+        # if not keywords:
+        #     return f'all:"{optimized_query}"'
+        #
+        # # 推荐方式：拼接为空格，单一 all 查询
+        # arxiv_query = 'OR'.join(f'"{kw}"' for kw in keywords)
+        # return arxiv_query
 
 
 if __name__ == "__main__":

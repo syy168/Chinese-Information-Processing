@@ -2,8 +2,11 @@ import streamlit as st
 import os
 import json
 from datetime import datetime
-#import streamlit as st
+import streamlit as st
 from rag import RAGSystem, DataSource, PaperData
+# 在文件顶部导入部分添加
+import re
+
 
 import re
 import base64
@@ -189,11 +192,17 @@ with tab1:
     
     col1, col2 = st.columns([3, 1])
     
+    # 在搜索关键词输入框下方添加提示词优化选项
     with col1:
         search_keyword = st.text_input(
             "搜索关键词",
             placeholder="例如: semantic segmentation, transformer, computer vision",
             help="输入您想搜索的论文关键词"
+        )
+        use_query_optimization = st.checkbox(
+            "使用提示词优化", 
+            value=False,
+            help="使用大模型对搜索关键词进行优化，生成更专业的学术搜索词"
         )
     
     with col2:
@@ -217,32 +226,46 @@ with tab1:
         elif not configure_rag_system():
             st.error("请先配置 DeepSeek API")
         else:
+            # 如果选择了提示词优化，先优化搜索关键词
+            if use_query_optimization:
+                with st.spinner("正在优化搜索关键词..."):
+                    optimize_keyword = st.session_state.rag_system.optimize_query(search_keyword)
+                    # 显示优化后的关键词
+                    st.info(f"优化后的搜索关键词: {optimize_keyword}")
+                    # 使用优化后的关键词搜索
+                    # papers = st.session_state.rag_system.search_and_index(optimized_keyword, max_results)
+                    
             with st.spinner(f"正在使用 {data_source} 搜索论文..."):
-                try:
-                    # 使用增强RAG系统搜索和索引
-                    papers = st.session_state.rag_system.search_and_index(search_keyword, max_results)
-                    st.session_state.papers = papers
-                    
-                    # 保存数据
-                    filename = f"papers_{data_source.lower().replace(' ', '_')}.json"
-                    st.session_state.rag_system.save_data(papers, filename)
-                    
-                    st.success(f"✅ 成功处理 {len(papers)} 篇论文并构建索引")
-                    
-                    # 显示统计信息
-                    github_count = sum(1 for p in papers if p.github_info or p.code_info)
-                    dataset_count = sum(1 for p in papers if p.dataset_info)
-                    metrics_count = sum(1 for p in papers if p.metrics)
-                    
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        st.metric("📄 论文总数", len(papers))
-                    with col2:
-                        st.metric("💻 包含代码", github_count)
-                    with col3:
-                        st.metric("📊 包含数据集", dataset_count)
-                    with col4:
-                        st.metric("📈 包含指标", metrics_count)
+                try:                   
+                    if use_query_optimization:
+                        papers = st.session_state.rag_system.search_and_index(optimize_keyword, max_results)
+                    else:
+                        papers = st.session_state.rag_system.search_and_index(search_keyword, max_results)
+                    if papers is None :
+                        st.info("未搜索到结果，请重新搜索")
+                    else:
+                        st.session_state.papers = papers
+
+                        # 保存数据
+                        filename = f"papers_{data_source.lower().replace(' ', '_')}.json"
+                        st.session_state.rag_system.save_data(papers, filename)
+
+                        st.success(f"✅ 成功处理 {len(papers)} 篇论文并构建索引")
+
+                        # 显示统计信息
+                        github_count = sum(1 for p in papers if p.github_info or p.code_info)
+                        dataset_count = sum(1 for p in papers if p.dataset_info)
+                        metrics_count = sum(1 for p in papers if p.metrics)
+
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric("📄 论文总数", len(papers))
+                        with col2:
+                            st.metric("💻 包含代码", github_count)
+                        with col3:
+                            st.metric("📊 包含数据集", dataset_count)
+                        with col4:
+                            st.metric("📈 包含指标", metrics_count)
                         
                 except Exception as e:
                     st.error(f"搜索过程中出现错误: {str(e)}")
@@ -311,23 +334,122 @@ with tab2:
             help="选择不同的查询模式"
         )
         
+        # 添加选择特定文章或代码的功能
+        selected_papers = None
+        selected_codes = None
+        
+        if query_type == "paper_analysis":
+            # 如果选择了论文分析模式，显示论文选择框
+            if st.session_state.papers:
+                paper_titles = [paper.title for paper in st.session_state.papers]
+                selected_papers = st.multiselect(
+                    "选择要分析的论文",
+                    paper_titles,
+                    help="选择特定的论文进行分析，不选择则分析所有相关论文"
+                )
+        
+        elif query_type == "code_analysis":
+            # 如果选择了代码分析模式，显示代码选择框
+            if st.session_state.papers:
+                # 筛选有代码的论文
+                papers_with_code = [paper.title for paper in st.session_state.papers 
+                                   if paper.github_info or paper.code_info]
+                if papers_with_code:
+                    selected_codes = st.multiselect(
+                        "选择要分析的代码",
+                        papers_with_code,
+                        help="选择特定论文的代码进行分析，不选择则分析所有相关代码"
+                    )
+                else:
+                    st.info("没有找到包含代码的论文")
+        
         # 预设问题
         st.subheader("💡 预设问题")
-        preset_questions = [
-            "这些论文中有哪些主要的算法创新？",
-            "请总结这些研究的核心贡献",
-            "有哪些代码实现可以参考？",
-            "这些方法的性能如何？"
-        ]
+        preset_questions = []
+        if query_type == "comprehensive":
+            preset_questions=[
+                "这些论文中有哪些主要的算法创新？",
+                "请总结这些研究的核心贡献",
+                "有哪些代码实现可以参考？",
+                "这些方法的性能如何？"
+            ]
+        elif query_type == "paper_analysis":
+            preset_questions = [
+                "请总结论文的创新点？",
+                "请总结论文的核心贡献",
+            ]
+        elif query_type == "code_analysis":
+            preset_questions = [
+                "请总结代码的创新点？",
+                "请总结代码的流程，用mermaid绘制",
+            ]
         
         for question in preset_questions:
             if st.button(question, key=f"preset_{question}"):
                 with st.spinner("🔍 正在分析..."):
                     try:
-                        result = st.session_state.rag_system.query(question, query_type)
+                        result = st.session_state.rag_system.query(
+                            question, 
+                            query_type,
+                            selected_papers=selected_papers,
+                            selected_codes=selected_codes
+                        )
                         st.success("✅ 分析完成")
                         st.write("**回答:**")
-                        st.markdown(result['response'])
+                        # 处理回答中的Mermaid图表
+                        response_text = result['response']
+                        # 查找Mermaid代码块
+                        mermaid_blocks = re.findall(r'```mermaid\n([\s\S]*?)\n```', response_text)
+
+                        # 如果找到Mermaid代码块，替换并渲染
+                        if mermaid_blocks:
+                            # 分割文本
+                            parts = re.split(r'```mermaid\n[\s\S]*?\n```', response_text)
+
+                            # 交替显示文本和Mermaid图表
+                            for i in range(len(parts)):
+                                if parts[i].strip():
+                                    st.markdown(parts[i])
+                                if i < len(mermaid_blocks):
+                                    default_code = mermaid_blocks[i]
+                                    st.code(default_code, language='mermaid')  # 显示 Mermaid 源码
+                                    # user_code = st.text_area(f"编辑 Mermaid 代码块 ", value=default_code, height=300)
+                                    safe_code = default_code.replace("\\", "\\\\").replace("`", "\\`").replace("\n",
+                                                                                                               "\\n")
+
+                                    # 添加按钮来控制渲染,每次点击按钮会重新运行脚本，回答会被覆盖，智能回答不含修改后再渲染功能
+                                    # if st.button(f"渲染图表"):
+                                    # 构建 Mermaid HTML
+                                    with st.expander("查看渲染后的图"):
+                                        html_code = f"""
+                                        <div id="mermaid-container">
+                                          <div class="mermaid">
+                                          {default_code}
+                                          </div>
+                                        </div>
+
+                                        <div id="error-message" style="color:red; font-weight:bold;"></div>
+
+                                        <script type="module">
+                                          import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+
+                                          const code = `{safe_code}`;
+
+                                          try {{
+                                              mermaid.parse(code);  // 检查语法
+                                              mermaid.initialize({{ startOnLoad: true }});
+                                          }} catch (e) {{
+                                              const container = document.getElementById("mermaid-container");
+                                              const errorDiv = document.getElementById("error-message");
+                                              container.innerHTML = "";  // 清空图形区域
+                                              errorDiv.innerText = "❌ Mermaid 图语法错误: " + e.message;
+                                          }}
+                                        </script>
+                                        """
+                                        components.html(html_code, height=600, scrolling=True)
+                        else:
+                            # 如果没有Mermaid代码块，直接显示文本
+                            st.markdown(response_text)
                         
                         # 显示来源
                         with st.expander("📚 参考来源"):
@@ -353,11 +475,70 @@ with tab2:
             if st.button("🔍 提问") and user_question:
                 with st.spinner("🔍 正在分析..."):
                     try:
-                        result = st.session_state.rag_system.query(user_question, query_type)
+                        result = st.session_state.rag_system.query(
+                            user_question, 
+                            query_type,
+                            selected_papers=selected_papers,
+                            selected_codes=selected_codes
+                        )
+                        # 在tab2的回答显示部分添加Mermaid图表渲染功能
+                        # 修改预设问题部分的回答显示
                         st.success("✅ 分析完成")
                         st.write("**回答:**")
-                        st.write(result['response'])
+                        # 处理回答中的Mermaid图表
+                        response_text = result['response']
+                        # 查找Mermaid代码块
+                        mermaid_blocks = re.findall(r'```mermaid\n([\s\S]*?)\n```', response_text)
                         
+                        # 如果找到Mermaid代码块，替换并渲染
+                        if mermaid_blocks:
+                            # 分割文本
+                            parts = re.split(r'```mermaid\n[\s\S]*?\n```', response_text)
+                            
+                            # 交替显示文本和Mermaid图表
+                            for i in range(len(parts)):
+                                if parts[i].strip():
+                                    st.markdown(parts[i])
+                                if i < len(mermaid_blocks):
+                                    default_code = mermaid_blocks[i]
+                                    st.code(default_code, language='mermaid')  # 显示 Mermaid 源码
+                                    # user_code = st.text_area(f"编辑 Mermaid 代码块 ", value=default_code, height=300)
+                                    safe_code = default_code.replace("\\", "\\\\").replace("`", "\\`").replace("\n","\\n")
+
+                                    # 添加按钮来控制渲染,每次点击按钮会重新运行脚本，回答会被覆盖，智能回答不含修改后再渲染功能
+                                    # if st.button(f"渲染图表"):
+                                    # 构建 Mermaid HTML
+                                    with st.expander("查看渲染后的图"):
+                                        html_code = f"""
+                                            <div id="mermaid-container">
+                                              <div class="mermaid">
+                                              {default_code}
+                                              </div>
+                                            </div>
+
+                                            <div id="error-message" style="color:red; font-weight:bold;"></div>
+
+                                            <script type="module">
+                                              import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+
+                                              const code = `{safe_code}`;
+
+                                              try {{
+                                                  mermaid.parse(code);  // 检查语法
+                                                  mermaid.initialize({{ startOnLoad: true }});
+                                              }} catch (e) {{
+                                                  const container = document.getElementById("mermaid-container");
+                                                  const errorDiv = document.getElementById("error-message");
+                                                  container.innerHTML = "";  // 清空图形区域
+                                                  errorDiv.innerText = "❌ Mermaid 图语法错误: " + e.message;
+                                              }}
+                                            </script>
+                                            """
+                                        components.html(html_code, height=600, scrolling=True)
+                        else:
+                            # 如果没有Mermaid代码块，直接显示文本
+                            st.markdown(response_text)
+                                        
                         # 显示来源
                         with st.expander("📚 参考来源"):
                             shown_titles = set()
@@ -485,7 +666,56 @@ with tab3:
                         st.error("请先配置 API")
             except Exception as e:
                 st.error(f"加载文件失败: {str(e)}")
+    # 在数据管理tab中添加论文链接输入功能
+    # 在数据管理tab的现有功能之后添加
+    st.subheader("📝 添加单篇论文")
+    paper_link = st.text_input("输入论文链接 (ArXiv或Papers with Code):", 
+                              help="例如: https://arxiv.org/abs/2103.14030 或 https://paperswithcode.com/paper/...")
     
+    link_source = st.radio("链接来源", ["ArXiv"], horizontal=True)
+    
+    if st.button("添加论文"):
+        print(link_source)
+        if paper_link:
+            if configure_rag_system():
+                with st.spinner("正在获取论文信息..."):
+                    try:
+                        # 根据链接来源选择不同的处理方法
+                        if link_source == "ArXiv":
+                            new_paper = st.session_state.rag_system.add_paper_from_arxiv_link(paper_link)
+                        # else:  # Papers with Code
+                        #     new_paper = st.session_state.rag_system.add_paper_from_pwc_link(paper_link)
+
+                        if new_paper:
+                            existing_titles = [paper.title for paper in st.session_state.papers]
+                            if new_paper.title  in existing_titles:
+                                st.error("论文已在系统中")
+                            else:
+                                st.session_state.papers.append(new_paper)
+                                # 更新索引
+                                documents = st.session_state.rag_system.document_processor.process_papers([new_paper])
+                                from llama_index.core import VectorStoreIndex
+                                from llama_index.core.node_parser import SentenceSplitter
+
+                                # 如果索引已存在，添加到现有索引
+                                if st.session_state.rag_system.index:
+                                    st.session_state.rag_system.index.insert_nodes(documents)
+                                else:  # 否则创建新索引
+                                    st.session_state.rag_system.index = VectorStoreIndex.from_documents(
+                                        documents,
+                                        transformations=[SentenceSplitter(chunk_size=1000, chunk_overlap=200)]
+                                    )
+
+                                st.success(f"成功添加论文: {new_paper.title}")
+                                st.rerun()  # 刷新页面显示新添加的论文
+                        else:
+                            st.error("无法获取论文信息，请检查链接是否正确")
+                    except Exception as e:
+                        st.error(f"无法获取论文信息，请检查链接是否正确: {str(e)}")
+            else:
+                st.error("请先配置 API")
+        else:
+            st.warning("请输入论文链接")
     # 系统状态
     st.subheader("🔧 系统状态")
     status_col1, status_col2, status_col3, status_col4 = st.columns(4)
@@ -576,7 +806,7 @@ st.markdown("---")
 st.markdown(
     """
     <div style='text-align: center'>
-        <p>🚀 基于 LangChain + LlamaIndex 和 Streamlit 构建的智能论文检索系统</p>
+        <p>基于 LangChain + LlamaIndex 和 Streamlit 构建的智能论文检索系统</p>
         <p>支持 ArXiv/Papers with Code 论文搜索、GitHub 代码分析和智能问答</p>
     </div>
     """,
