@@ -620,7 +620,89 @@ class RAGSystem:
             papers.append(paper)
         
         return papers
+# 在RAGSystem类中添加以下方法
 
+    def add_paper_from_arxiv_link(self, arxiv_link: str) -> Optional[PaperData]:
+        """从ArXiv链接添加单篇论文"""
+        try:
+            # 从链接中提取论文ID
+            import re
+            arxiv_id = re.search(r'arxiv\.org/(?:abs|pdf)/([\d\.]+)(?:v\d+)?', arxiv_link)
+            # print(arxiv_id)
+            if not arxiv_id:
+                return None
+            
+            arxiv_id = arxiv_id.group(1)
+            
+            # 使用arxiv API获取论文信息
+            client = arxiv.Client()
+            search = arxiv.Search(id_list=[arxiv_id])
+            
+            for result in client.results(search):
+                paper = PaperData(
+                    title=result.title,
+                    authors=[author.name for author in result.authors],
+                    summary=result.summary,
+                    pdf_url=result.pdf_url,
+                    published=result.published.isoformat() if result.published else None
+                )
+                
+                # 丰富论文数据
+                if self.data_source == DataSource.ARXIV:
+                    paper = self.dataAPI.enrich_paper_data(paper)
+                else:
+                    # 如果当前数据源是PWC，但我们添加的是ArXiv论文，仍然使用ArXiv API丰富数据
+                    arxiv_api = ArxivAPI()
+                    paper = arxiv_api.enrich_paper_data(paper)
+                
+                return paper
+            
+            return None
+        except Exception as e:
+            print(f"从ArXiv链接添加论文失败: {e}")
+            return None
+    
+    def add_paper_from_pwc_link(self, pwc_link: str) -> Optional[PaperData]:
+        """从Papers with Code链接添加单篇论文"""
+        try:
+            # 从链接中提取论文ID
+            import re
+            paper_id = re.search(r'paperswithcode\.com/paper/([\w-]+)', pwc_link)
+            if not paper_id:
+                return None
+            
+            paper_id = paper_id.group(1)
+            
+            # 使用Papers with Code API获取论文信息
+            pwc_api = PWCAPI()
+            api_url = f"{pwc_api.BASE_URL}/papers/{paper_id}/"
+            
+            response = requests.get(api_url, timeout=10)
+            if response.status_code != 200:
+                return None
+            
+            data = response.json()
+            
+            paper = PaperData(
+                title=data.get("title", ""),
+                authors=data.get("authors", []),
+                summary=data.get("abstract", ""),
+                pdf_url=data.get("url_pdf"),
+                published=data.get("published")
+            )
+            
+            # 丰富论文数据
+            if self.data_source == DataSource.PWC:
+                paper = self.dataAPI.enrich_paper_data(paper, paper_id)
+            else:
+                # 如果当前数据源是ArXiv，但我们添加的是PWC论文，仍然使用PWC API丰富数据
+                pwc_api = PWCAPI()
+                paper = pwc_api.enrich_paper_data(paper, paper_id)
+            
+            return paper
+        except Exception as e:
+            print(f"从Papers with Code链接添加论文失败: {e}")
+            return None
 
 
 if __name__ == "__main__":

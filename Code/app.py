@@ -540,7 +540,56 @@ with tab3:
                         st.error("请先配置 API")
             except Exception as e:
                 st.error(f"加载文件失败: {str(e)}")
+    # 在数据管理tab中添加论文链接输入功能
+    # 在数据管理tab的现有功能之后添加
+    st.subheader("📝 添加单篇论文")
+    paper_link = st.text_input("输入论文链接 (ArXiv或Papers with Code):", 
+                              help="例如: https://arxiv.org/abs/2103.14030 或 https://paperswithcode.com/paper/...")
     
+    link_source = st.radio("链接来源", ["ArXiv"], horizontal=True)
+    
+    if st.button("添加论文"):
+        print(link_source)
+        if paper_link:
+            if configure_rag_system():
+                with st.spinner("正在获取论文信息..."):
+                    try:
+                        # 根据链接来源选择不同的处理方法
+                        if link_source == "ArXiv":
+                            new_paper = st.session_state.rag_system.add_paper_from_arxiv_link(paper_link)
+                        # else:  # Papers with Code
+                        #     new_paper = st.session_state.rag_system.add_paper_from_pwc_link(paper_link)
+
+                        if new_paper:
+                            existing_titles = [paper.title for paper in st.session_state.papers]
+                            if new_paper.title  in existing_titles:
+                                st.error("论文已在系统中")
+                            else:
+                                st.session_state.papers.append(new_paper)
+                                # 更新索引
+                                documents = st.session_state.rag_system.document_processor.process_papers([new_paper])
+                                from llama_index.core import VectorStoreIndex
+                                from llama_index.core.node_parser import SentenceSplitter
+
+                                # 如果索引已存在，添加到现有索引
+                                if st.session_state.rag_system.index:
+                                    st.session_state.rag_system.index.insert_nodes(documents)
+                                else:  # 否则创建新索引
+                                    st.session_state.rag_system.index = VectorStoreIndex.from_documents(
+                                        documents,
+                                        transformations=[SentenceSplitter(chunk_size=1000, chunk_overlap=200)]
+                                    )
+
+                                st.success(f"成功添加论文: {new_paper.title}")
+                                st.rerun()  # 刷新页面显示新添加的论文
+                        else:
+                            st.error("无法获取论文信息，请检查链接是否正确")
+                    except Exception as e:
+                        st.error(f"无法获取论文信息，请检查链接是否正确: {str(e)}")
+            else:
+                st.error("请先配置 API")
+        else:
+            st.warning("请输入论文链接")
     # 系统状态
     st.subheader("🔧 系统状态")
     status_col1, status_col2, status_col3, status_col4 = st.columns(4)
