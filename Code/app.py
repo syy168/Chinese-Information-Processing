@@ -7,7 +7,7 @@ import streamlit.components.v1 as components
 from rag import RAGSystem, DataSource, PaperData
 # 在文件顶部导入部分添加
 import re
-from streamlit_mermaid import st_mermaid
+
 
 # 页面配置
 st.set_page_config(
@@ -86,11 +86,17 @@ with tab1:
     
     col1, col2 = st.columns([3, 1])
     
+    # 在搜索关键词输入框下方添加提示词优化选项
     with col1:
         search_keyword = st.text_input(
             "搜索关键词",
             placeholder="例如: semantic segmentation, transformer, computer vision",
             help="输入您想搜索的论文关键词"
+        )
+        use_query_optimization = st.checkbox(
+            "使用提示词优化", 
+            value=False,
+            help="使用大模型对搜索关键词进行优化，生成更专业的学术搜索词"
         )
     
     with col2:
@@ -114,32 +120,46 @@ with tab1:
         elif not configure_rag_system():
             st.error("请先配置 DeepSeek API")
         else:
+            # 如果选择了提示词优化，先优化搜索关键词
+            if use_query_optimization:
+                with st.spinner("正在优化搜索关键词..."):
+                    optimize_keyword = st.session_state.rag_system.optimize_query(search_keyword)
+                    # 显示优化后的关键词
+                    st.info(f"优化后的搜索关键词: {optimize_keyword}")
+                    # 使用优化后的关键词搜索
+                    # papers = st.session_state.rag_system.search_and_index(optimized_keyword, max_results)
+                    
             with st.spinner(f"正在使用 {data_source} 搜索论文..."):
-                try:
-                    # 使用增强RAG系统搜索和索引
-                    papers = st.session_state.rag_system.search_and_index(search_keyword, max_results)
-                    st.session_state.papers = papers
-                    
-                    # 保存数据
-                    filename = f"papers_{data_source.lower().replace(' ', '_')}.json"
-                    st.session_state.rag_system.save_data(papers, filename)
-                    
-                    st.success(f"✅ 成功处理 {len(papers)} 篇论文并构建索引")
-                    
-                    # 显示统计信息
-                    github_count = sum(1 for p in papers if p.github_info or p.code_info)
-                    dataset_count = sum(1 for p in papers if p.dataset_info)
-                    metrics_count = sum(1 for p in papers if p.metrics)
-                    
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        st.metric("📄 论文总数", len(papers))
-                    with col2:
-                        st.metric("💻 包含代码", github_count)
-                    with col3:
-                        st.metric("📊 包含数据集", dataset_count)
-                    with col4:
-                        st.metric("📈 包含指标", metrics_count)
+                try:                   
+                    if use_query_optimization:
+                        papers = st.session_state.rag_system.search_and_index(optimize_keyword, max_results)
+                    else:
+                        papers = st.session_state.rag_system.search_and_index(search_keyword, max_results)
+                    if papers is None :
+                        st.info("未搜索到结果，请重新搜索")
+                    else:
+                        st.session_state.papers = papers
+
+                        # 保存数据
+                        filename = f"papers_{data_source.lower().replace(' ', '_')}.json"
+                        st.session_state.rag_system.save_data(papers, filename)
+
+                        st.success(f"✅ 成功处理 {len(papers)} 篇论文并构建索引")
+
+                        # 显示统计信息
+                        github_count = sum(1 for p in papers if p.github_info or p.code_info)
+                        dataset_count = sum(1 for p in papers if p.dataset_info)
+                        metrics_count = sum(1 for p in papers if p.metrics)
+
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric("📄 论文总数", len(papers))
+                        with col2:
+                            st.metric("💻 包含代码", github_count)
+                        with col3:
+                            st.metric("📊 包含数据集", dataset_count)
+                        with col4:
+                            st.metric("📈 包含指标", metrics_count)
                         
                 except Exception as e:
                     st.error(f"搜索过程中出现错误: {str(e)}")
@@ -628,7 +648,7 @@ st.markdown("---")
 st.markdown(
     """
     <div style='text-align: center'>
-        <p>🚀 基于 LangChain + LlamaIndex 和 Streamlit 构建的智能论文检索系统</p>
+        <p>基于 LangChain + LlamaIndex 和 Streamlit 构建的智能论文检索系统</p>
         <p>支持 ArXiv/Papers with Code 论文搜索、GitHub 代码分析和智能问答</p>
     </div>
     """,
