@@ -3,7 +3,11 @@ import os
 import json
 from datetime import datetime
 import streamlit as st
+import streamlit.components.v1 as components
 from rag import RAGSystem, DataSource, PaperData
+# 在文件顶部导入部分添加
+import re
+from streamlit_mermaid import st_mermaid
 
 # 页面配置
 st.set_page_config(
@@ -235,12 +239,24 @@ with tab2:
         
         # 预设问题
         st.subheader("💡 预设问题")
-        preset_questions = [
-            "这些论文中有哪些主要的算法创新？",
-            "请总结这些研究的核心贡献",
-            "有哪些代码实现可以参考？",
-            "这些方法的性能如何？"
-        ]
+        preset_questions = []
+        if query_type == "comprehensive":
+            preset_questions=[
+                "这些论文中有哪些主要的算法创新？",
+                "请总结这些研究的核心贡献",
+                "有哪些代码实现可以参考？",
+                "这些方法的性能如何？"
+            ]
+        elif query_type == "paper_analysis":
+            preset_questions = [
+                "请总结论文的创新点？",
+                "请总结论文的核心贡献",
+            ]
+        elif query_type == "code_analysis":
+            preset_questions = [
+                "请总结代码的创新点？",
+                "请总结代码的流程，用mermaid绘制",
+            ]
         
         for question in preset_questions:
             if st.button(question, key=f"preset_{question}"):
@@ -254,7 +270,60 @@ with tab2:
                         )
                         st.success("✅ 分析完成")
                         st.write("**回答:**")
-                        st.markdown(result['response'])
+                        # 处理回答中的Mermaid图表
+                        response_text = result['response']
+                        # 查找Mermaid代码块
+                        mermaid_blocks = re.findall(r'```mermaid\n([\s\S]*?)\n```', response_text)
+
+                        # 如果找到Mermaid代码块，替换并渲染
+                        if mermaid_blocks:
+                            # 分割文本
+                            parts = re.split(r'```mermaid\n[\s\S]*?\n```', response_text)
+
+                            # 交替显示文本和Mermaid图表
+                            for i in range(len(parts)):
+                                if parts[i].strip():
+                                    st.markdown(parts[i])
+                                if i < len(mermaid_blocks):
+                                    default_code = mermaid_blocks[i]
+                                    st.code(default_code, language='mermaid')  # 显示 Mermaid 源码
+                                    # user_code = st.text_area(f"编辑 Mermaid 代码块 ", value=default_code, height=300)
+                                    safe_code = default_code.replace("\\", "\\\\").replace("`", "\\`").replace("\n",
+                                                                                                               "\\n")
+
+                                    # 添加按钮来控制渲染,每次点击按钮会重新运行脚本，回答会被覆盖，智能回答不含修改后再渲染功能
+                                    # if st.button(f"渲染图表"):
+                                    # 构建 Mermaid HTML
+                                    with st.expander("查看渲染后的图"):
+                                        html_code = f"""
+                                        <div id="mermaid-container">
+                                          <div class="mermaid">
+                                          {default_code}
+                                          </div>
+                                        </div>
+
+                                        <div id="error-message" style="color:red; font-weight:bold;"></div>
+
+                                        <script type="module">
+                                          import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+
+                                          const code = `{safe_code}`;
+
+                                          try {{
+                                              mermaid.parse(code);  // 检查语法
+                                              mermaid.initialize({{ startOnLoad: true }});
+                                          }} catch (e) {{
+                                              const container = document.getElementById("mermaid-container");
+                                              const errorDiv = document.getElementById("error-message");
+                                              container.innerHTML = "";  // 清空图形区域
+                                              errorDiv.innerText = "❌ Mermaid 图语法错误: " + e.message;
+                                          }}
+                                        </script>
+                                        """
+                                        components.html(html_code, height=600, scrolling=True)
+                        else:
+                            # 如果没有Mermaid代码块，直接显示文本
+                            st.markdown(response_text)
                         
                         # 显示来源
                         with st.expander("📚 参考来源"):
@@ -286,10 +355,64 @@ with tab2:
                             selected_papers=selected_papers,
                             selected_codes=selected_codes
                         )
+                        # 在tab2的回答显示部分添加Mermaid图表渲染功能
+                        # 修改预设问题部分的回答显示
                         st.success("✅ 分析完成")
                         st.write("**回答:**")
-                        st.write(result['response'])
+                        # 处理回答中的Mermaid图表
+                        response_text = result['response']
+                        # 查找Mermaid代码块
+                        mermaid_blocks = re.findall(r'```mermaid\n([\s\S]*?)\n```', response_text)
                         
+                        # 如果找到Mermaid代码块，替换并渲染
+                        if mermaid_blocks:
+                            # 分割文本
+                            parts = re.split(r'```mermaid\n[\s\S]*?\n```', response_text)
+                            
+                            # 交替显示文本和Mermaid图表
+                            for i in range(len(parts)):
+                                if parts[i].strip():
+                                    st.markdown(parts[i])
+                                if i < len(mermaid_blocks):
+                                    default_code = mermaid_blocks[i]
+                                    st.code(default_code, language='mermaid')  # 显示 Mermaid 源码
+                                    # user_code = st.text_area(f"编辑 Mermaid 代码块 ", value=default_code, height=300)
+                                    safe_code = default_code.replace("\\", "\\\\").replace("`", "\\`").replace("\n","\\n")
+
+                                    # 添加按钮来控制渲染,每次点击按钮会重新运行脚本，回答会被覆盖，智能回答不含修改后再渲染功能
+                                    # if st.button(f"渲染图表"):
+                                    # 构建 Mermaid HTML
+                                    with st.expander("查看渲染后的图"):
+                                        html_code = f"""
+                                            <div id="mermaid-container">
+                                              <div class="mermaid">
+                                              {default_code}
+                                              </div>
+                                            </div>
+
+                                            <div id="error-message" style="color:red; font-weight:bold;"></div>
+
+                                            <script type="module">
+                                              import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+
+                                              const code = `{safe_code}`;
+
+                                              try {{
+                                                  mermaid.parse(code);  // 检查语法
+                                                  mermaid.initialize({{ startOnLoad: true }});
+                                              }} catch (e) {{
+                                                  const container = document.getElementById("mermaid-container");
+                                                  const errorDiv = document.getElementById("error-message");
+                                                  container.innerHTML = "";  // 清空图形区域
+                                                  errorDiv.innerText = "❌ Mermaid 图语法错误: " + e.message;
+                                              }}
+                                            </script>
+                                            """
+                                        components.html(html_code, height=600, scrolling=True)
+                        else:
+                            # 如果没有Mermaid代码块，直接显示文本
+                            st.markdown(response_text)
+                                        
                         # 显示来源
                         with st.expander("📚 参考来源"):
                             shown_titles = set()
