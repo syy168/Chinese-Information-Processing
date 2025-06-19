@@ -2,8 +2,114 @@ import streamlit as st
 import os
 import json
 from datetime import datetime
-import streamlit as st
+#import streamlit as st
 from rag import RAGSystem, DataSource, PaperData
+
+import re
+import base64
+import requests
+import io
+import streamlit.components.v1 as components
+
+def render_markdown_with_mermaid(text: str):
+    pattern = r'```mermaid([\s\S]*?)```'
+    matches = re.finditer(pattern, text)
+
+    last_end = 0
+    for i, match in enumerate(matches):
+        start, end = match.span()
+        code = match.group(1).strip()
+        chart_id = f"chart_{i}"
+        code_json = json.dumps(code)
+
+        st.markdown(f"### Mermaid 图 #{i + 1}")
+        show_rendered = st.checkbox(f"切换为图形化显示 #{i + 1}", value=False, key=f"toggle_{i}")
+
+        if not show_rendered:
+            st.code(code, language="mermaid")
+        else:
+            html = f"""
+            <html>
+            <head>
+              <script src="https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js"></script>
+              <style>
+                .download-btn {{
+                    position: absolute;
+                    top: 5px;
+                    right: 5px;
+                    background: rgba(0,0,0,0.5);
+                    border: none;
+                    width: 28px;
+                    height: 28px;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    opacity: 0.7;
+                    transition: opacity 0.2s;
+                    padding: 0;
+                }}
+                .download-btn:hover {{
+                    opacity: 1;
+                }}
+                .download-btn svg {{
+                    fill: white;
+                    width: 18px;
+                    height: 18px;
+                }}
+              </style>
+            </head>
+            <body>
+              <div id="{chart_id}_container" style="position: relative;">
+                <div class="mermaid" id="{chart_id}">{code}</div>
+                <button class="download-btn" onclick="downloadSVG()" title="下载 SVG">
+                  <svg viewBox="0 0 24 24">
+                    <path d="M5 20h14v-2H5v2zm7-18L5.33 9.67h3.84v6.66h5.66v-6.66h3.84L12 2z"/>
+                  </svg>
+                </button>
+              </div>
+
+              <script>
+                const code = {code_json};
+                mermaid.initialize({{ startOnLoad: false }});
+
+                setTimeout(() => {{
+                    const el = document.getElementById("{chart_id}");
+                    el.innerHTML = code;
+                    mermaid.init(undefined, "#" + el.id);
+                }}, 100);
+
+                function downloadSVG() {{
+                    const svgEl = document.querySelector("#{chart_id} svg");
+                    if (!svgEl) {{
+                        alert("SVG 尚未渲染，请稍候");
+                        return;
+                    }}
+                    const serializer = new XMLSerializer();
+                    const svgContent = serializer.serializeToString(svgEl);
+                    const blob = new Blob([svgContent], {{ type: "image/svg+xml" }});
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = "{chart_id}.svg";
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                }}
+              </script>
+            </body>
+            </html>
+            """
+            components.html(html, height=500, scrolling=True)
+
+    # 显示尾部 markdown
+    tail = text[end:]
+    if tail.strip():
+        st.markdown(tail)
+
+
 
 # 页面配置
 st.set_page_config(
@@ -75,7 +181,8 @@ def configure_rag_system():
     return False
 
 # 主界面
-tab1, tab2, tab3 = st.tabs(["📖 论文搜索", "🤖 智能问答", "📊 数据管理"])
+#tab1, tab2, tab3 = st.tabs(["📖 论文搜索", "🤖 智能问答", "📊 数据管理"])
+tab1, tab2, tab3, tab4 = st.tabs(["📖 论文搜索", "🤖 智能问答", "📊 数据管理", "🎨 图表渲染"])
 
 with tab1:
     st.header(f"📖 论文搜索 - {data_source}")
@@ -411,6 +518,58 @@ with tab3:
                     st.write(f"   🔗 GitHub: {paper.github_info.get('url', 'N/A')}")
                 if paper.code_info:
                     st.write(f"   💻 代码实现: 可用")
+
+with tab4:
+    if not st.session_state.rag_system:
+        st.warning("⚠️ 请先配置API并搜索论文以构建知识库")
+    else:
+        st.header("🎨 图表渲染")
+
+        # 全局引入 Mermaid.js 并初始化
+        st.markdown("""
+        <script>
+            if (!window.mermaidLoaded) {
+                window.mermaidLoaded = true;
+                var script = document.createElement('script');
+                script.src = "https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js";
+                script.onload = function () {
+                    mermaid.initialize({
+                        startOnLoad: false,
+                        theme: 'base',
+                        securityLevel: 'loose'
+                    });
+                    console.log("Mermaid 已加载并初始化");
+                };
+                document.head.appendChild(script);
+            }
+        </script>
+        """, unsafe_allow_html=True)
+        
+        gannt_prompt = '''请根据论文内容，按论文时间或算法提出时间顺序（以年月日为单位）生成其核心算法演进图，以Mermaid Gantt 图表形式输出'''
+
+        result = st.session_state.rag_system.query(gannt_prompt, query_type = "comprehensive")
+        st.success("✅ 生成完成")
+        st.write("**算法演进图:**")
+        model_output = result['response']
+        print(model_output)
+        
+        with st.spinner(f"正在生成. Mermaid 渲染..."):
+            render_markdown_with_mermaid(model_output)
+        # 保存原始输出
+        st.session_state.model_output = model_output
+        st.success("✅ 内容渲染完成！")
+
+
+
+        # 下载功能
+        if hasattr(st.session_state, 'model_output'):
+            st.download_button(
+                label="下载原始内容",
+                data=st.session_state.model_output,
+                file_name="model_output.txt",
+                mime="text/plain"
+            )
+
 
 # 页脚
 st.markdown("---")

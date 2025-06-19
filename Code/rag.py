@@ -456,7 +456,7 @@ class RAGSystem:
         Settings.llm = deepseek_llm
         
         # Settings.embed_model = HuggingFaceEmbedding(model_name="/home/aistudio/BAAI-bge-small-en-v1.5")
-        Settings.embed_model = HuggingFaceEmbedding(model_name="../BAAI-bge-small-en-v1.5")
+        Settings.embed_model = HuggingFaceEmbedding(model_name="/mnt/workspace/1.0/BAAI-bge-small-en-v1.5")
         
         
         
