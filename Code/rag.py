@@ -500,14 +500,41 @@ class RAGSystem:
         print("索引构建完成")
         return papers
     
-    def query(self, question: str, query_type: str = "comprehensive") -> Dict[str, Any]:
+    def query(self, question: str, query_type: str = "comprehensive", selected_papers=None, selected_codes=None) -> Dict[str, Any]:
         """智能查询"""
         if not self.index:
             raise ValueError("请先搜索论文并构建索引")
         
-        # 使用 LlamaIndex 检索相关文档,这里已经限制索引，因此similarity_top_k改设为none
-        retriever = VectorIndexRetriever(index=self.index, similarity_top_k=None)
-        nodes = retriever.retrieve(question)
+        # 使用 LlamaIndex 检索相关文档
+        if selected_papers or selected_codes:
+            # 如果用户选择了特定文章或代码，则只从这些内容中检索
+            nodes = []
+            
+            # 从索引中获取所有节点
+            all_nodes = self.index.docstore.docs.values()
+            
+            # 根据选择的文章筛选节点
+            if selected_papers:
+                for node in all_nodes:
+                    if 'title' in node.metadata and node.metadata['title'] in selected_papers:
+                        nodes.append(node)
+            
+            # 根据选择的代码筛选节点
+            if selected_codes and not nodes:  # 如果没有选择文章或没有找到匹配的文章节点
+                for node in all_nodes:
+                    if 'source' in node.metadata and node.metadata['source'] in ['github', 'PWC code info'] and \
+                       'paper_title' in node.metadata and node.metadata['paper_title'] in selected_codes:
+                        nodes.append(node)
+            
+            # 如果没有找到匹配的节点，则使用默认检索方法
+            if not nodes:
+                retriever = VectorIndexRetriever(index=self.index, similarity_top_k=5)
+                nodes = retriever.retrieve(question)
+        else:
+            # 默认检索方法
+            retriever = VectorIndexRetriever(index=self.index, similarity_top_k=5)
+            nodes = retriever.retrieve(question)
+        
         # 准备上下文
         context = "\n\n".join([node.text for node in nodes])
         

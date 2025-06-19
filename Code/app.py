@@ -204,6 +204,35 @@ with tab2:
             help="选择不同的查询模式"
         )
         
+        # 添加选择特定文章或代码的功能
+        selected_papers = None
+        selected_codes = None
+        
+        if query_type == "paper_analysis":
+            # 如果选择了论文分析模式，显示论文选择框
+            if st.session_state.papers:
+                paper_titles = [paper.title for paper in st.session_state.papers]
+                selected_papers = st.multiselect(
+                    "选择要分析的论文",
+                    paper_titles,
+                    help="选择特定的论文进行分析，不选择则分析所有相关论文"
+                )
+        
+        elif query_type == "code_analysis":
+            # 如果选择了代码分析模式，显示代码选择框
+            if st.session_state.papers:
+                # 筛选有代码的论文
+                papers_with_code = [paper.title for paper in st.session_state.papers 
+                                   if paper.github_info or paper.code_info]
+                if papers_with_code:
+                    selected_codes = st.multiselect(
+                        "选择要分析的代码",
+                        papers_with_code,
+                        help="选择特定论文的代码进行分析，不选择则分析所有相关代码"
+                    )
+                else:
+                    st.info("没有找到包含代码的论文")
+        
         # 预设问题
         st.subheader("💡 预设问题")
         preset_questions = [
@@ -217,7 +246,12 @@ with tab2:
             if st.button(question, key=f"preset_{question}"):
                 with st.spinner("🔍 正在分析..."):
                     try:
-                        result = st.session_state.rag_system.query(question, query_type)
+                        result = st.session_state.rag_system.query(
+                            question, 
+                            query_type,
+                            selected_papers=selected_papers,
+                            selected_codes=selected_codes
+                        )
                         st.success("✅ 分析完成")
                         st.write("**回答:**")
                         st.markdown(result['response'])
@@ -246,7 +280,12 @@ with tab2:
             if st.button("🔍 提问") and user_question:
                 with st.spinner("🔍 正在分析..."):
                     try:
-                        result = st.session_state.rag_system.query(user_question, query_type)
+                        result = st.session_state.rag_system.query(
+                            user_question, 
+                            query_type,
+                            selected_papers=selected_papers,
+                            selected_codes=selected_codes
+                        )
                         st.success("✅ 分析完成")
                         st.write("**回答:**")
                         st.write(result['response'])
